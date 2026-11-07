@@ -1,49 +1,67 @@
 import time
-from datetime import datetime
+import logging
+import sys
 from create_db import init_database
 from extract import extract_all_cities, save_raw_data
 from transform import load_raw_data, transform_weather_data
 from load import get_connection, load_cities, load_weather_data
 
+# Configure logging: outputs to both the terminal and 'pipeline.log'
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler("pipeline.log"),
+        logging.StreamHandler(sys.stdout)
+    ]
+)
+
 def run_pipeline():
-    """Run the complete Weather Data Pipeline end to end."""
+    """Run the complete Weather Data Pipeline with logging and error handling."""
     start_time = time.time()
-    print("=" * 60)
-    print(f" Weather Pipeline Started at: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    print("=" * 60)
+    logging.info("==================================================")
+    logging.info("🌤️  WEATHER DATA PIPELINE STARTED")
+    logging.info("==================================================")
 
-    # 1. Initialize Database Schema
-    print("\n[Step 1/4] Initializing Database Schema...")
-    init_database()
+    try:
+        # Step 1: Database Setup
+        logging.info("Step 1/4: Initializing SQLite database schema...")
+        init_database()
 
-    # 2. Extract Phase
-    print("\n[Step 2/4] Extracting Weather Data from Open-Meteo API...")
-    raw_data = extract_all_cities()
-    save_raw_data(raw_data)
+        # Step 2: Extract Phase
+        logging.info("Step 2/4: Extracting weather data from Open-Meteo API...")
+        raw_data = extract_all_cities()
+        if not raw_data:
+            raise ValueError("Extraction returned no data!")
+        save_raw_data(raw_data)
 
-    # 3. Transform Phase
-    print("\n[Step 3/4] Transforming and Validating Data with pandas...")
-    raw_data = load_raw_data()
-    clean_df = transform_weather_data(raw_data)
-    print(f"Successfully cleaned {len(clean_df)} weather records.")
+        # Step 3: Transform Phase
+        logging.info("Step 3/4: Transforming and validating data with pandas...")
+        raw_json = load_raw_data()
+        clean_df = transform_weather_data(raw_json)
+        logging.info(f"Transform complete: {len(clean_df)} clean records prepared.")
 
-    # 4. Load Phase
-    print("\n[Step 4/4] Loading Cleaned Records into SQLite...")
-    conn = get_connection()
-    load_cities(conn)
-    load_weather_data(conn, clean_df)
+        # Step 4: Load Phase
+        logging.info("Step 4/4: Loading clean records into SQLite database...")
+        conn = get_connection()
+        load_cities(conn)
+        load_weather_data(conn, clean_df)
 
-    # Verification Query
-    cursor = conn.cursor()
-    cursor.execute("SELECT COUNT(*) FROM weather_daily;")
-    total_records = cursor.fetchone()[0]
-    conn.close()
+        # Verify final record count
+        cursor = conn.cursor()
+        cursor.execute("SELECT COUNT(*) FROM weather_daily;")
+        total_records = cursor.fetchone()[0]
+        conn.close()
 
-    elapsed = round(time.time() - start_time, 2)
-    print("\n" + "=" * 60)
-    print(f" Pipeline Finished Successfully in {elapsed} seconds!")
-    print(f" Total Records in Database: {total_records}")
-    print("=" * 60)
+        elapsed = round(time.time() - start_time, 2)
+        logging.info("==================================================")
+        logging.info(f"✅ PIPELINE COMPLETED SUCCESSFULLY in {elapsed}s")
+        logging.info(f"📊 Total records in database: {total_records}")
+        logging.info("==================================================")
+
+    except Exception as e:
+        logging.error(f"❌ Pipeline failed with error: {str(e)}", exc_info=True)
+        sys.exit(1)
 
 if __name__ == "__main__":
     run_pipeline()
